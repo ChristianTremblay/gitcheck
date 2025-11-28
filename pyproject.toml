@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitcheck"
+version = "1.0.0"
+description = "Check multiple git repository in one pass"
+readme = "README.rst"
+authors = [
+    {name = "Bruno Adele", email = "bruno@adele.im"}
+]
+license = {text = "GPL"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License (GPL)",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Version Control",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/badele/gitcheck"
+Repository = "https://github.com/badele/gitcheck"
+
+[project.scripts]
+gitcheck = "gitcheck.gitcheck:main"
+
+[tool.setuptools]
+py-modules = ["gitcheck.gitcheck"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gitcheck*"]

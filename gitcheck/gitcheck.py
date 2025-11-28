@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import unicode_literals, absolute_import, division, print_function
 
 import os
 import re
@@ -14,14 +13,13 @@ from smtplib import SMTPException
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import shlex
-from colorama import init as windows_color_terminal
-
 from os.path import expanduser
 from time import strftime
-
 import json
 
-from colored import fg, bg, attr
+from rich.console import Console
+
+console = Console()
 
 # Global vars
 argopts = {}
@@ -36,22 +34,19 @@ if os.path.exists(configfile):
     if hasattr(userconf, 'colortheme'):
         colortheme = userconf.colortheme
 if colortheme is None:
-    # Default theme
-    defaultcolor = attr('reset') + fg('white')
+    # Default theme using rich colors
     colortheme = {
-        'default': defaultcolor,
-        'prjchanged': attr('reset') + attr('bold') + fg('deep_pink_1a'),
-        'prjremote': attr('reverse') + fg('light_cyan'),
-        'prjname': attr('reset') + fg('chartreuse_1'),
-        'reponame': attr('reset') + fg('light_goldenrod_2b'),
-        'branchname': defaultcolor,
-        'fileupdated': attr('reset') + fg('light_goldenrod_2b'),
-        'remoteto': attr('reset') + fg('deep_sky_blue_3b'),
-        'committo': attr('reset') + fg('violet'),
-        'commitinfo': attr('reset') + fg('deep_sky_blue_3b'),
-        'commitstate': attr('reset') + fg('deep_pink_1a'),
-        'bell': "\a",
-        'reset': "\033[2J\033[H"
+        'default': 'white',
+        'prjchanged': 'bold deep_pink1',
+        'prjremote': 'magenta',
+        'prjname': 'chartreuse1',
+        'reponame': 'light_goldenrod2',
+        'branchname': 'white',
+        'fileupdated': 'light_goldenrod2',
+        'remoteto': 'deep_sky_blue3',
+        'committo': 'violet',
+        'commitinfo': 'deep_sky_blue3',
+        'commitstate': 'deep_pink1',
     }
 
 
@@ -67,7 +62,7 @@ class html:
 
 def showDebug(mess, level='info'):
     if argopts.get('debugmod', False):
-        print(mess)
+        console.print(f"[dim]{mess}[/dim]")
 
 
 # Search all local repositories from current directory
@@ -120,14 +115,7 @@ def checkRepository(rep, branch):
             ischange = ischange or (count > 0)
             actionNeeded = actionNeeded or (count > 0)
             if count > 0:
-                topush += " %s%s%s[%sTo Push:%s%s]" % (
-                    colortheme['reponame'],
-                    r,
-                    colortheme['default'],
-                    colortheme['remoteto'],
-                    colortheme['default'],
-                    count
-                )
+                topush += f" [{colortheme['reponame']}]{r}[/][[{colortheme['remoteto']}]To Push:[/]{count}]"
                 html.topush += '<b style="color:black">%s</b>[<b style="color:blue">To Push:</b><b style="color:black">%s</b>]' % (
                     r,
                     count
@@ -138,14 +126,7 @@ def checkRepository(rep, branch):
             ischange = ischange or (count > 0)
             actionNeeded = actionNeeded or (count > 0)
             if count > 0:
-                topull += " %s%s%s[%sTo Pull:%s%s]" % (
-                    colortheme['reponame'],
-                    r,
-                    colortheme['default'],
-                    colortheme['remoteto'],
-                    colortheme['default'],
-                    count
-                )
+                topull += f" [{colortheme['reponame']}]{r}[/][[{colortheme['remoteto']}]To Pull:[/]{count}]"
                 html.topull += '<b style="color:black">%s</b>[<b style="color:blue">To Pull:</b><b style="color:black">%s</b>]' % (
                     r,
                     count
@@ -180,18 +161,12 @@ def checkRepository(rep, branch):
 
         # Print result
         if len(changes) > 0:
-            strlocal = "%sLocal%s[" % (colortheme['reponame'], colortheme['default'])
-            lenFilesChnaged = len(getLocalFilesChange(rep))
-            strlocal += "%sTo Commit:%s%s" % (
-                colortheme['remoteto'],
-                colortheme['default'],
-                lenFilesChnaged
-            )
+            lenFilesChanged = len(getLocalFilesChange(rep))
+            strlocal = f"[{colortheme['reponame']}]Local[/][[{colortheme['remoteto']}]To Commit:[/]{lenFilesChanged}]"
             html.strlocal = '<b style="color:orange"> Local</b><b style="color:black">['
             html.strlocal += "To Commit:%s" % (
-                lenFilesChnaged
+                lenFilesChanged
             )
-            strlocal += "]"
             html.strlocal += "]</b>"
         else:
             strlocal = ""
@@ -201,42 +176,32 @@ def checkRepository(rep, branch):
             html.msg += "<li>%s/%s %s %s %s</li>\n" % (html.prjname, branch, html.strlocal, html.topush, html.topull)
 
         else:
-            cbranch = "%s%s" % (colortheme['branchname'], branch)
-            print("%(prjname)s/%(cbranch)s %(strlocal)s%(topush)s%(topull)s" % locals())
+            cbranch = f"[{colortheme['branchname']}]{branch}[/]"
+            prjname_styled = f"[{colortheme['prjname'] if not ischange else colortheme['prjchanged'] if hasremotes else colortheme['prjremote']}]{repname}[/]"
+            console.print(f"{prjname_styled}/{cbranch} {strlocal}{topush}{topull}")
 
         if argopts.get('verbose', False):
             if ischange > 0:
-                filename = "  |--Local"
                 if not argopts.get('email', False):
-                    print(filename)
+                    console.print("  [bold]|--Local[/bold]")
                 html.msg += '<ul><li><b>Local</b></li></ul>\n<ul>\n'
                 for c in changes:
-                    filename = "     |--%s%s%s %s%s" % (
-                        colortheme['commitstate'],
-                        c[0],
-                        colortheme['fileupdated'],
-                        c[1],
-                        colortheme['default'])
                     html.msg += '<li> <b style="color:orange">[To Commit] </b>%s</li>\n' % c[1]
-                    if not argopts.get('email', False): print(filename)
+                    if not argopts.get('email', False):
+                        console.print(f"     |--[{colortheme['commitstate']}]{c[0]}[/] [{colortheme['fileupdated']}]{c[1]}[/]")
                 html.msg += '</ul>\n'
             if branch != "":
                 remotes = getRemoteRepositories(rep)
                 for r in remotes:
                     commits = getLocalToPush(rep, r, branch)
                     if len(commits) > 0:
-                        rname = "  |--%(r)s" % locals()
                         html.msg += '<ul><li><b>%(r)s</b></li>\n</ul>\n<ul>\n' % locals()
-                        if not argopts.get('email', False): print(rname)
+                        if not argopts.get('email', False):
+                            console.print(f"  |--{r}")
                         for commit in commits:
-                            pcommit = "     |--%s[To Push]%s %s%s%s" % (
-                                colortheme['committo'],
-                                colortheme['default'],
-                                colortheme['commitinfo'],
-                                commit,
-                                colortheme['default'])
                             html.msg += '<li><b style="color:blue">[To Push] </b>%s</li>\n' % commit
-                            if not argopts.get('email', False): print(pcommit)
+                            if not argopts.get('email', False):
+                                console.print(f"     |--[{colortheme['committo']}][To Push][/] [{colortheme['commitinfo']}]{commit}[/]")
                         html.msg += '</ul>\n'
 
             if branch != "":
@@ -244,18 +209,13 @@ def checkRepository(rep, branch):
                 for r in remotes:
                     commits = getRemoteToPull(rep, r, branch)
                     if len(commits) > 0:
-                        rname = "  |--%(r)s" % locals()
                         html.msg += '<ul><li><b>%(r)s</b></li>\n</ul>\n<ul>\n' % locals()
-                        if not argopts.get('email', False): print(rname)
+                        if not argopts.get('email', False):
+                            console.print(f"  |--{r}")
                         for commit in commits:
-                            pcommit = "     |--%s[To Pull]%s %s%s%s" % (
-                                colortheme['committo'],
-                                colortheme['default'],
-                                colortheme['commitinfo'],
-                                commit,
-                                colortheme['default'])
                             html.msg += '<li><b style="color:blue">[To Pull] </b>%s</li>\n' % commit
-                            if not argopts.get('email', False): print(pcommit)
+                            if not argopts.get('email', False):
+                                console.print(f"     |--[{colortheme['committo']}][To Pull][/] [{colortheme['commitinfo']}]{commit}[/]")
                         html.msg += '</ul>\n'
 
     return actionNeeded
@@ -269,9 +229,9 @@ def getLocalFilesChange(rep):
     result = gitExec(rep, "status -s" + onlyTrackedArg)
 
     lines = result.split('\n')
-    for l in lines:
-        if not re.match(argopts.get('ignoreLocal', r'^$'), l):
-            m = snbchange.match(l)
+    for line in lines:
+        if not re.match(argopts.get('ignoreLocal', r'^$'), line):
+            m = snbchange.match(line)
             if m:
                 files.append([m.group(1), m.group(2)])
 
@@ -344,7 +304,7 @@ def gitExec(path, cmd):
     p = subprocess.Popen(cmdargs, stdout=PIPE, stderr=PIPE)
     output, errors = p.communicate()
     if p.returncode:
-        print('Failed running %s' % commandToExecute)
+        console.print(f'[red]Failed running {commandToExecute}[/red]')
         raise Exception(errors)
     return output.decode('utf-8')
 
@@ -358,12 +318,12 @@ def gitcheck():
 
     if argopts.get('checkremote', False):
         for r in repo:
-            print ("Updating %s remotes..." % r)
+            console.print(f"[cyan]Updating {r} remotes...[/cyan]")
             updateRemote(r)
 
     if argopts.get('watchInterval', 0) > 0:
-        print(colortheme['reset'])
-        print(strftime("%Y-%m-%d %H:%M:%S"))
+        console.clear()
+        console.print(f"[bold]{strftime('%Y-%m-%d %H:%M:%S')}[/bold]")
 
     showDebug("Processing repositories... please wait.")
     for r in repo:
@@ -378,7 +338,7 @@ def gitcheck():
     html.msg += "</ul>\n<p>Report created on %s</p>\n" % html.timestamp
 
     if actionNeeded and argopts.get('bellOnActionNeeded', False):
-        print(colortheme['bell'])
+        console.bell()
 
 
 def sendReport(content):
@@ -399,9 +359,9 @@ def sendReport(content):
         html.path, content
     )
     # Write html file to disk
-    f = open(filepath + '//result.html', 'w')
-    f.write(htmlcontent)
-    print ("File saved under %s\\result.html" % filepath)
+    with open(filepath + '//result.html', 'w') as f:
+        f.write(htmlcontent)
+    console.print(f"[green]File saved under {filepath}\\result.html[/green]")
     # Record the MIME types of both parts - text/plain and text/html.
     part1 = MIMEText(text, 'plain')
     part2 = MIMEText(htmlcontent, 'html')
@@ -412,7 +372,7 @@ def sendReport(content):
     msg.attach(part1)
     msg.attach(part2)
     try:
-        print ("Sending email to %s" % config['to'])
+        console.print(f"[cyan]Sending email to {config['to']}[/cyan]")
         # Send the message via local SMTP server.
         s = smtplib.SMTP(config['smtp'], config['smtp_port'])
         # sendmail function takes 3 arguments: sender's address, recipient's address
@@ -420,7 +380,7 @@ def sendReport(content):
         s.sendmail(config['from'], config['to'], msg.as_string())
         s.quit()
     except SMTPException as e:
-        print("Error sending email : %s" % str(e))
+        console.print(f"[red]Error sending email: {str(e)}[/red]")
 
 
 def initEmailConfig():
@@ -436,8 +396,9 @@ def initEmailConfig():
     if not os.path.exists(saveFilePath):
         os.makedirs(saveFilePath)
     filename = saveFilePath + '\mail.properties'
-    json.dump(config, fp=open(filename, 'w'), indent=4)
-    print('Please, modify config file located here : %s' % filename)
+    with open(filename, 'w') as fp:
+        json.dump(config, fp=fp, indent=4)
+    console.print(f'[yellow]Please, modify config file located here: {filename}[/yellow]')
 
 
 def readDefaultConfig():
@@ -447,28 +408,27 @@ def readDefaultConfig():
 
 
 def usage():
-    print("Usage: %s [OPTIONS]" % (sys.argv[0]))
-    print("Check multiple git repository in one pass")
-    print("== Common options ==")
-    print("  -v, --verbose                        Show files & commits")
-    print("  --debug                              Show debug message")
-    print("  -r, --remote                         force remote update (slow)")
-    print("  -u, --untracked                      Show untracked files")
-    print("  -b, --bell                           bell on action needed")
-    print("  -w <sec>, --watch=<sec>              after displaying, wait <sec> and run again")
-    print("  -i <re>, --ignore-branch=<re>        ignore branches matching the regex <re>")
-    print("  -d <dir>, --dir=<dir>                Search <dir> for repositories (can be used multiple times)")
-    print("  -m <maxdepth>, --maxdepth=<maxdepth> Limit the depth of repositories search")
-    print("  -q, --quiet                          Display info only when repository needs action")
-    print("  -e, --email                          Send an email with result as html, using mail.properties parameters")
-    print("  -a, --all-branch                     Show the status of all branches")
-    print("  -l <re>, --localignore=<re>          ignore changes in local files which match the regex <re>")
-    print("  --init-email                         Initialize mail.properties file (has to be modified by user using JSON Format)")
+    console.print(f"[bold cyan]Usage:[/bold cyan] {sys.argv[0]} [OPTIONS]")
+    console.print("[bold]Check multiple git repository in one pass[/bold]\n")
+    console.print("[bold yellow]== Common options ==[/bold yellow]")
+    console.print("  [green]-v, --verbose[/green]                        Show files & commits")
+    console.print("  [green]--debug[/green]                              Show debug message")
+    console.print("  [green]-r, --remote[/green]                         force remote update (slow)")
+    console.print("  [green]-u, --untracked[/green]                      Show untracked files")
+    console.print("  [green]-b, --bell[/green]                           bell on action needed")
+    console.print("  [green]-w <sec>, --watch=<sec>[/green]              after displaying, wait <sec> and run again")
+    console.print("  [green]-i <re>, --ignore-branch=<re>[/green]        ignore branches matching the regex <re>")
+    console.print("  [green]-d <dir>, --dir=<dir>[/green]                Search <dir> for repositories (can be used multiple times)")
+    console.print("  [green]-m <maxdepth>, --maxdepth=<maxdepth>[/green] Limit the depth of repositories search")
+    console.print("  [green]-q, --quiet[/green]                          Display info only when repository needs action")
+    console.print("  [green]-e, --email[/green]                          Send an email with result as html, using mail.properties parameters")
+    console.print("  [green]-a, --all-branch[/green]                     Show the status of all branches")
+    console.print("  [green]-l <re>, --localignore=<re>[/green]          ignore changes in local files which match the regex <re>")
+    console.print("  [green]--init-email[/green]                         Initialize mail.properties file (has to be modified by user using JSON Format)")
 
 
 def main():
-    if 'win' in sys.platform:
-        windows_color_terminal()
+    # Rich console handles colors automatically on all platforms
     try:
         opts, args = getopt.getopt(
             sys.argv[1:],
@@ -480,9 +440,9 @@ def main():
         )
     except getopt.GetoptError as error:
         if error.opt == 'w' and 'requires argument' in error.msg:
-            print("Please indicate nb seconds for refresh ex: gitcheck -w10")
+            console.print("[red]Please indicate nb seconds for refresh ex: gitcheck -w10[/red]")
         else:
-            print(error.msg)
+            console.print(f"[red]{error.msg}[/red]")
         sys.exit(2)
 
     readDefaultConfig()
@@ -516,7 +476,7 @@ def main():
             try:
                 argopts['depth'] = int(arg)
             except ValueError:
-                print("option %s requires int value" % opt)
+                console.print(f"[red]option {opt} requires int value[/red]")
                 sys.exit(2)
         elif opt in ["-q", "--quiet"]:
             argopts['quiet'] = True
@@ -544,7 +504,7 @@ def main():
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:
-            print ("Unexpected error:", str(e))
+            console.print(f"[red]Unexpected error: {str(e)}[/red]")
 
         if argopts.get('watchInterval', 0) > 0:
             time.sleep(argopts.get('watchInterval', 0))

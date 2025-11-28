@@ -1,6 +1,18 @@
 Changelog
 =========
 
+Version 1.0.0 (2025-11-27)
+--------------------------
+ * BREAKING: Dropped Python 2 support - now requires Python 3.8+
+ * Modernized terminal output using Rich library
+ * Replaced colored/colorama dependencies with rich
+ * Updated all output to use modern Rich markup syntax
+ * Improved code quality: PEP8 compliance, f-strings, context managers
+ * Cross-platform color support without platform-specific initialization
+ * Enhanced user experience with beautiful, consistent terminal output
+ * Migrated from setup.py to modern pyproject.toml
+ * See MIGRATION.md for upgrade guide
+
 Version 0.3.22 (2015-05-05)
 --------------------------
  * Check git repositories from an docker container

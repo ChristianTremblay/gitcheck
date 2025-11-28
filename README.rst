@@ -5,22 +5,42 @@
 gitcheck
 ========
 
+**Modernized for Python 3 with Rich terminal output!**
+
 When working simultaneously on several git repositories, it is easy to
-loose the overview on the advancement of your work.  This is why I
-decided to write gitcheck, a tool which reports the status of the
-repositories it finds in a file tree.  This report can of course be
-displayed on the terminal but also be sent by email.
+lose the overview on the advancement of your work. This is why gitcheck
+was created - a tool which reports the status of the repositories it
+finds in a file tree. This report can be displayed on the terminal with
+beautiful, colorful output using the Rich library, or sent by email.
 
-Now you can also check your host git from an docker container. See the docker section
+Now you can also check your host git from a docker container. See the docker section
 
+
+Requirements
+------------
+
+- Python 3.8 or higher
+- Git
 
 
 Installation
 ------------
 
+Using pip:
+
 ::
 
     pip install git+git://github.com/badele/gitcheck.git
+
+Or for development:
+
+::
+
+    git clone https://github.com/badele/gitcheck.git
+    cd gitcheck
+    pip install -e .
+
+The project uses modern ``pyproject.toml`` for configuration.
 
 
 Examples
