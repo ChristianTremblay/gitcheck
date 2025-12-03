@@ -195,6 +195,11 @@ Options
     -v, --verbose                        Show files & commits
     --debug                              Show debug message
     -r, --remote                         force remote update(slow)
+    -p, --auto-pull                      Auto-pull when safe (no conflicts, no local changes)
+    -j, --parallel                       Use parallel processing for remote updates (faster)
+    --jobs=<n>                           Number of parallel jobs (default: 4)
+    --use-https                          Convert git:// and SSH URLs to HTTPS (firewall bypass)
+    --validate-token                     Validate GitLab token before checking repositories
     -u, --untracked                      Show untracked files
     -b, --bell                           bell on action needed
     -w <sec>, --watch=<sec>              after displaying, wait <sec> and run again
@@ -315,8 +320,97 @@ Edit ``~/.ssh/config`` (or ``C:\Users\YourName\.ssh\config`` on Windows):
 
 This way, gitcheck (and all git commands) will automatically use the correct key for that host.
 
+GitLab Token Validation
+~~~~~~~~~~~~~~~~~~~~~~~
+
+If you're using GitLab with HTTPS authentication (``--use-https``), gitcheck can validate your personal access token before processing repositories.
+
+**Standalone Token Validation**
+
+You can run the token validation tool independently:
+
+.. code:: bash
+
+    # Interactive mode - prompts for token and validates
+    python -m gitcheck.validate_token
+    
+    # Check existing token only (no prompt)
+    python -m gitcheck.validate_token --check-only
+    
+    # Quiet mode for scripting (minimal output, exit code 0=valid, 1=invalid)
+    python -m gitcheck.validate_token --check-only --quiet
+    
+    # Custom GitLab host
+    python -m gitcheck.validate_token --host git.example.com
+
+**Integrated Validation**
+
+You can also validate your token as part of gitcheck:
+
+.. code:: bash
+
+    # Validate token before checking repositories
+    gitcheck -r --use-https --validate-token
+
+**TactRMM/Automation Usage**
+
+The standalone validator is perfect for automation tools like TactRMM to verify tokens across multiple users:
+
+.. code:: powershell
+
+    # Check if user's token is valid
+    python -m gitcheck.validate_token --check-only --quiet
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Token is valid"
+    } else {
+        Write-Host "Token is invalid or expired"
+    }
+
+**Token Requirements**
+
+When creating a GitLab personal access token at ``https://git.servisys.com/-/user_settings/personal_access_tokens``:
+
+- **Required scopes:** ``read_repository``, ``write_repository``
+- Expiration: Set according to your security policy
+- The token will be stored permanently in your environment
+
+**Token Storage**
+
+Tokens are stored persistently:
+
+- **Windows:** ``GITLAB_TOKEN`` environment variable via registry (``setx``)
+- **Linux/Mac:** ``GITLAB_TOKEN`` export in ``~/.bashrc``/``~/.zshrc``
+
+After saving, restart your terminal or source your shell profile.
+
+
+Project Structure
+~~~~~~~~~~~~~~~~~
+
+The project is organized into modular components for better maintainability:
+
+- ``gitcheck/gitcheck.py`` - Main application logic and git operations
+- ``gitcheck/https_utils.py`` - HTTPS/OAuth token management utilities
+  
+  - Token prompting and validation
+  - URL conversion (git://, SSH → HTTPS)
+  - OAuth token injection for GitLab/GitHub
+  - Persistent token storage
+  - Authentication error detection
+
+- ``gitcheck/validate_token.py`` - Standalone GitLab token validation
+  
+  - Validates tokens via GitLab API (``/api/v4/user``)
+  - Interactive and non-interactive modes
+  - Perfect for TactRMM/automation deployments
+  - Returns exit code 0 (valid) or 1 (invalid)
+
+This modular structure makes it easier to maintain and test the HTTPS/OAuth features independently.
+
+
 French version
 ~~~~~~~~~~~~~~
 
 A French version of this document is available here:
 http://bruno.adele.im/projets/gitcheck/
+

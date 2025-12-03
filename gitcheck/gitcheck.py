@@ -572,7 +572,24 @@ def gitcheck():
     actionNeeded = False
 
     if argopts.get('checkremote', False):
-        # Only prompt for token if use_https is enabled AND token is missing
+        # Validate token first if using HTTPS mode
+        if argopts.get('use_https', False) and argopts.get('validate_token', False):
+            from . import validate_token
+            
+            gitlab_token = os.environ.get('GITLAB_TOKEN', '').strip()
+            if gitlab_token:
+                gitlab_host = argopts.get('gitlab_host', 'git.servisys.com')
+                console.print(f"[cyan]Validating token against {gitlab_host}...[/cyan]")
+                is_valid, message, user_info = validate_token.check_token_validity(gitlab_token, gitlab_host)
+                
+                if not is_valid:
+                    console.print(f"[red]✗ Token validation failed: {message}[/red]")
+                    console.print("[yellow]Please run: gitcheck_token[/yellow]")
+                    return
+                else:
+                    console.print(f"[green]✓ {message}[/green]")
+        
+        # Only prompt for token if use_https is enabled AND token is missing or empty
         # Token will be re-prompted automatically if authentication fails during operations
         if argopts.get('use_https', False):
             gitlab_token = os.environ.get('GITLAB_TOKEN', '').strip()
@@ -584,7 +601,52 @@ def gitcheck():
                     os.environ['GITLAB_TOKEN'] = gitlab_token
                     # Save permanently
                     https_utils.saveTokenPermanently(gitlab_token, console, console_lock)
-            # else: token already exists, will be used automatically
+                else:
+                    # User cancelled token entry
+                    console.print("[yellow]No token provided. Cannot proceed with HTTPS remotes.[/yellow]")
+                    return
+            
+            # Test the token with a quick validation before proceeding
+            # This prevents starting parallel processing with an invalid token
+            if repo and gitlab_token:
+                console.print("[cyan]Testing token with first repository...[/cyan]")
+                test_repo = repo[0]
+                try:
+                    # Try to convert and update the first repo as a test
+                    converted, info = ensureHttpsRemotes(test_repo)
+                    if converted and not argopts.get('verbose', False):
+                        console.print(f"  [dim]Converted {len(info)} remote(s) to HTTPS[/dim]")
+                    
+                    # Try a quick remote update
+                    gitExec(test_repo, "remote update", timeout=15)
+                    console.print("[green]✓ Token verified successfully[/green]")
+                except Exception as e:
+                    # Check if it's an authentication error
+                    if https_utils.isAuthenticationError(str(e)):
+                        console.print(f"[red]✗ Token authentication failed: {str(e)}[/red]")
+                        
+                        # Prompt for new token
+                        new_token = promptForNewToken()
+                        if new_token:
+                            # Test the new token
+                            try:
+                                converted, info = ensureHttpsRemotes(test_repo, force_update=True)
+                                gitExec(test_repo, "remote update", timeout=15)
+                                console.print("[green]✓ New token verified successfully[/green]")
+                            except Exception as retry_error:
+                                if https_utils.isAuthenticationError(str(retry_error)):
+                                    console.print("[red]✗ New token also failed. Please run: gitcheck_token[/red]")
+                                    return
+                                else:
+                                    # Non-auth error, can continue
+                                    console.print(f"[yellow]Warning: {str(retry_error)}[/yellow]")
+                        else:
+                            console.print("[yellow]No token provided. Cannot proceed.[/yellow]")
+                            return
+                    else:
+                        # Non-authentication error, just warn and continue
+                        console.print(f"[yellow]Warning for {test_repo}: {str(e)}[/yellow]")
+                        console.print("[cyan]Continuing with other repositories...[/cyan]")
         
         max_workers = argopts.get('jobs', 4)  # Default to 4 parallel jobs
         
@@ -900,6 +962,7 @@ def usage():
     console.print("  [green]-j, --parallel[/green]                       Use parallel processing for remote updates (faster)")
     console.print("  [green]--jobs=<n>[/green]                           Number of parallel jobs (default: 4)")
     console.print("  [green]--use-https[/green]                          Convert git:// and SSH URLs to HTTPS (firewall bypass)")
+    console.print("  [green]--validate-token[/green]                     Validate GitLab token before checking repositories")
     console.print("  [green]-u, --untracked[/green]                      Show untracked files")
     console.print("  [green]-b, --bell[/green]                           bell on action needed")
     console.print("  [green]-w <sec>, --watch=<sec>[/green]              after displaying, wait <sec> and run again")
@@ -928,7 +991,7 @@ def main():
             [
                 "verbose", "debug", "help", "remote", "untracked", "bell", "auto-pull", "parallel", "watch=", "ignore-branch=",
                 "dir=", "maxdepth=", "quiet", "email", "init-email", "all-branch", "localignore=", "interactive",
-                "ssh-key=", "jobs=", "use-https"
+                "ssh-key=", "jobs=", "use-https", "validate-token"
             ]
         )
     except getopt.GetoptError as error:
@@ -1015,6 +1078,8 @@ def main():
                 sys.exit(2)
         elif opt in ["--use-https"]:
             argopts['use_https'] = True
+        elif opt in ["--validate-token"]:
+            argopts['validate_token'] = True
         elif opt in ["-h", "--help"]:
             usage()
             sys.exit(0)

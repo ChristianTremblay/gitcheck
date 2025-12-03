@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gitcheck"
-version = "1.0.1"
+version = "1.0.2"
 description = "Check multiple git repository in one pass"
 readme = "README.rst"
 authors = [
@@ -41,6 +41,7 @@ Repository = "https://github.com/badele/gitcheck"
 
 [project.scripts]
 gitcheck = "gitcheck.gitcheck:main"
+gitcheck_token = "gitcheck.validate_token:main"
 
 [project.optional-dependencies]
 dev = [

@@ -95,15 +95,40 @@ def saveTokenPermanently(token, console, console_lock):
     """
     try:
         if sys.platform == 'win32':
-            # Windows: Use setx command
+            # Windows: Use setx command to save permanently
             subprocess.run(
                 ['setx', 'GITLAB_TOKEN', token],
                 capture_output=True,
                 check=True
             )
             with console_lock:
-                console.print("[green]✓ Token saved to environment variable GITLAB_TOKEN[/green]")
-                console.print("[yellow]Note: Restart your terminal for permanent effect[/yellow]")
+                console.print("[green]✓ Token saved to Windows registry (GITLAB_TOKEN)[/green]")
+            
+            # Reload the token from registry into current session
+            # This way gitcheck works immediately without restarting terminal
+            try:
+                result = subprocess.run(
+                    ['powershell', '-Command', 
+                     "[System.Environment]::GetEnvironmentVariable('GITLAB_TOKEN', 'User')"],
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                reloaded_token = result.stdout.strip()
+                if reloaded_token:
+                    os.environ['GITLAB_TOKEN'] = reloaded_token
+                    with console_lock:
+                        console.print("[green]✓ Token reloaded in current session[/green]")
+                else:
+                    # Fallback: use the token we just tried to save
+                    os.environ['GITLAB_TOKEN'] = token
+            except Exception as reload_error:
+                with console_lock:
+                    console.print(f"[yellow]Warning: Could not reload token from registry: {reload_error}[/yellow]")
+                # Fallback: use the token we just tried to save
+                os.environ['GITLAB_TOKEN'] = token
+                with console_lock:
+                    console.print("[yellow]Note: Token saved but you may need to restart terminal[/yellow]")
         else:
             # Unix-like: Append to shell profile
             shell_profile = os.path.expanduser('~/.bashrc')
@@ -123,12 +148,17 @@ def saveTokenPermanently(token, console, console_lock):
             with console_lock:
                 console.print(f"[green]✓ Token saved to {shell_profile}[/green]")
                 console.print("[yellow]Note: Run 'source {shell_profile}' or restart terminal[/yellow]")
+            
+            # Update current process environment
+            os.environ['GITLAB_TOKEN'] = token
         
         return True
     except Exception as e:
         with console_lock:
             console.print(f"[yellow]Warning: Could not save token permanently: {str(e)}[/yellow]")
             console.print("[yellow]Token will be used for this session only[/yellow]")
+        # Still update current process
+        os.environ['GITLAB_TOKEN'] = token
         return False
 
 
@@ -267,6 +297,10 @@ def isAuthenticationError(error_message):
         'token expired',
         'unauthorized',
         'http basic: access denied',
+        'ssl certificate problem',
+        'certificate verify failed',
+        'could not read username',
+        'could not read password',
         '401',
         '403'
     ]
