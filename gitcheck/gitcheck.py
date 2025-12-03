@@ -23,6 +23,8 @@ from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
+from . import https_utils
+
 console = Console()
 console_lock = threading.Lock()
 
@@ -266,16 +268,76 @@ def getRemoteToPull(rep, remote, branch):
     return [x for x in result.split('\n') if x]
 
 
+def convertRemoteToHttps(rep, remote_name='origin', force_update=False):
+    """Convert git:// or SSH remote URLs to HTTPS for firewall compatibility"""
+    gitlab_token = os.environ.get('GITLAB_TOKEN', '').strip()
+    return https_utils.convertRemoteToHttps(rep, remote_name, gitlab_token, gitExec, force_update=force_update)
+
+
+def promptForNewToken(reason="expired or invalid"):
+    """Prompt user for a new token and save it"""
+    new_token = https_utils.promptForNewToken(console, console_lock, reason)
+    if new_token:
+        # Save to environment for current process
+        os.environ['GITLAB_TOKEN'] = new_token
+        # Save permanently
+        https_utils.saveTokenPermanently(new_token, console, console_lock)
+    return new_token
+
+
+def ensureHttpsRemotes(rep, force_update=False):
+    """Ensure all remotes use HTTPS URLs"""
+    return https_utils.ensureHttpsRemotes(
+        rep,
+        getRemoteRepositories,
+        convertRemoteToHttps,
+        verbose=argopts.get('verbose', False),
+        console=console,
+        console_lock=console_lock,
+        force_update=force_update
+    )
+
+
 def updateRemote(rep):
     try:
+        # Convert to HTTPS if requested (for firewall bypass)
+        if argopts.get('use_https', False):
+            converted, info = ensureHttpsRemotes(rep)
+            if converted and not argopts.get('verbose', False):
+                with console_lock:
+                    console.print(f"  [dim]Converted {len(info)} remote(s) to HTTPS[/dim]")
+        
         # Use verbose mode to show what's being updated
-        result = gitExec(rep, "remote update")
+        # Set a timeout to prevent hanging on slow/unresponsive remotes
+        result = gitExec(rep, "remote update", timeout=30)
         if argopts.get('verbose', False) and result.strip():
             # Show the output from remote update
             for line in result.split('\n'):
                 if line.strip():
                     console.print(f"  [dim]{line}[/dim]")
+    except subprocess.TimeoutExpired:
+        raise Exception("Network timeout - remote server not responding")
     except Exception as e:
+        # Check for authentication failures that indicate expired/invalid token
+        if https_utils.isAuthenticationError(str(e)):
+            # Token appears to be expired or invalid
+            if argopts.get('use_https', False):
+                # Only prompt once per session
+                if not hasattr(updateRemote, '_token_retry_attempted'):
+                    updateRemote._token_retry_attempted = True
+                    
+                    new_token = promptForNewToken()
+                    if new_token:
+                        # Retry with new token - re-convert remotes with force_update=True
+                        converted, info = ensureHttpsRemotes(rep, force_update=True)
+                        # Retry the update
+                        result = gitExec(rep, "remote update", timeout=30)
+                        if argopts.get('verbose', False) and result.strip():
+                            for line in result.split('\n'):
+                                if line.strip():
+                                    console.print(f"  [dim]{line}[/dim]")
+                        return
+        
         raise e
 
 
@@ -340,6 +402,27 @@ def autoPullRepository(rep, branch):
             console.print("  [green]✓ Pulled successfully[/green]")
         return True
     except Exception as e:
+        # Check for authentication failures
+        if https_utils.isAuthenticationError(str(e)):
+            if argopts.get('use_https', False):
+                if not hasattr(autoPullRepository, '_token_retry_attempted'):
+                    autoPullRepository._token_retry_attempted = True
+                    
+                    new_token = promptForNewToken()
+                    if new_token:
+                        # Re-convert remotes with new token (force update)
+                        ensureHttpsRemotes(rep, force_update=True)
+                        # Retry pull
+                        try:
+                            result = gitExec(rep, "pull --ff-only")
+                            with console_lock:
+                                console.print("  [green]✓ Pulled successfully with new token[/green]")
+                            return True
+                        except Exception as retry_error:
+                            with console_lock:
+                                console.print(f"  [red]✗ Pull failed even with new token: {str(retry_error)}[/red]")
+                            return False
+        
         with console_lock:
             console.print(f"  [yellow]⚠ Auto-pull failed: {str(e)}[/yellow]")
         return False
@@ -369,6 +452,8 @@ def processRepository(repo_path):
                         result['pulled'] = True
         
         result['success'] = True
+    except subprocess.TimeoutExpired:
+        result['error'] = "Timeout (30s) - remote not responding"
     except Exception as e:
         result['error'] = str(e)
     
@@ -407,7 +492,7 @@ def getRemoteRepositories(rep):
     return remotes
 
 
-def gitExec(path, cmd):
+def gitExec(path, cmd, timeout=None):
     commandToExecute = "git -C \"%s\" %s" % (path, cmd)
     cmdargs = shlex.split(commandToExecute)
     showDebug("EXECUTE GIT COMMAND '%s'" % cmdargs)
@@ -455,12 +540,27 @@ def gitExec(path, cmd):
         showDebug(f"Using SSH key: {ssh_key}")
     
     p = subprocess.Popen(cmdargs, stdout=PIPE, stderr=PIPE, env=env)
-    output, errors = p.communicate()
+    try:
+        output, errors = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.communicate()  # Clean up
+        raise subprocess.TimeoutExpired(cmdargs, timeout)
+    
     if p.returncode:
         error_msg = errors.decode('utf-8') if errors else 'Unknown error'
         showDebug(f'Git command failed: {commandToExecute}')
         showDebug(f'Error output: {error_msg}')
-        raise Exception(error_msg)
+        
+        # Provide helpful error messages for common issues
+        if 'timed out' in error_msg.lower() or 'timeout' in error_msg.lower():
+            raise Exception("Network timeout - check your connection or remote server status")
+        elif 'could not resolve host' in error_msg.lower():
+            raise Exception("DNS resolution failed - check your network connection")
+        elif 'permission denied' in error_msg.lower():
+            raise Exception("Authentication failed - check SSH key or credentials")
+        else:
+            raise Exception(error_msg)
     return output.decode('utf-8')
 
 
@@ -472,40 +572,58 @@ def gitcheck():
     actionNeeded = False
 
     if argopts.get('checkremote', False):
+        # Only prompt for token if use_https is enabled AND token is missing
+        # Token will be re-prompted automatically if authentication fails during operations
+        if argopts.get('use_https', False):
+            gitlab_token = os.environ.get('GITLAB_TOKEN', '').strip()
+            if gitlab_token == '':  # Token is missing or empty
+                # Prompt for token now, before any parallel processing
+                gitlab_token = https_utils.promptForToken(console, console_lock)
+                if gitlab_token:
+                    # Save to environment for current process
+                    os.environ['GITLAB_TOKEN'] = gitlab_token
+                    # Save permanently
+                    https_utils.saveTokenPermanently(gitlab_token, console, console_lock)
+            # else: token already exists, will be used automatically
+        
         max_workers = argopts.get('jobs', 4)  # Default to 4 parallel jobs
         
         if argopts.get('parallel', False) and len(repo) > 1:
             # Parallel processing with progress bar
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-                console=console
-            ) as progress:
-                task = progress.add_task(f"[cyan]Processing {len(repo)} repositories...", total=len(repo))
-                
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    future_to_repo = {executor.submit(processRepository, r): r for r in repo}
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                    console=console
+                ) as progress:
+                    task = progress.add_task(f"[cyan]Processing {len(repo)} repositories...", total=len(repo))
                     
-                    for future in as_completed(future_to_repo):
-                        r = future_to_repo[future]
-                        try:
-                            result = future.result()
-                            progress.update(task, advance=1)
-                            
-                            with console_lock:
-                                if result['success']:
-                                    status = "✓ Updated"
-                                    if result['pulled']:
-                                        status += " + Pulled"
-                                    console.print(f"[green]{result['path']}[/green] - {status}")
-                                else:
-                                    console.print(f"[yellow]{result['path']}[/yellow] - Failed: {result['error']}")
-                        except Exception as e:
-                            progress.update(task, advance=1)
-                            with console_lock:
-                                console.print(f"[red]{r}[/red] - Error: {str(e)}")
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        future_to_repo = {executor.submit(processRepository, r): r for r in repo}
+                        
+                        for future in as_completed(future_to_repo):
+                            r = future_to_repo[future]
+                            try:
+                                result = future.result()
+                                progress.update(task, advance=1)
+                                
+                                with console_lock:
+                                    if result['success']:
+                                        status = "✓ Updated"
+                                        if result['pulled']:
+                                            status += " + Pulled"
+                                        console.print(f"[green]{result['path']}[/green] - {status}")
+                                    else:
+                                        console.print(f"[yellow]{result['path']}[/yellow] - Failed: {result['error']}")
+                            except Exception as e:
+                                progress.update(task, advance=1)
+                                with console_lock:
+                                    console.print(f"[red]{r}[/red] - Error: {str(e)}")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]⚠ Interrupted by user - stopping parallel processing...[/yellow]")
+                raise
         else:
             # Sequential processing (original behavior)
             for r in repo:
@@ -521,6 +639,9 @@ def gitcheck():
                         for branch in branch_set:
                             if branch:  # Skip if no branch detected
                                 autoPullRepository(r, branch)
+                except KeyboardInterrupt:
+                    console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
+                    raise
                 except Exception as e:
                     console.print(f"[yellow]Warning: Failed to update remotes for {r}[/yellow]")
                     if argopts.get('debugmod', False):
@@ -533,13 +654,17 @@ def gitcheck():
 
     showDebug("Processing repositories... please wait.")
     for r in repo:
-        if (argopts.get('checkall', False)):
-            branch = getAllBranches(r)
-        else:
-            branch = getDefaultBranch(r)
-        for b in branch:
-            if checkRepository(r, b):
-                actionNeeded = True
+        try:
+            if (argopts.get('checkall', False)):
+                branch = getAllBranches(r)
+            else:
+                branch = getDefaultBranch(r)
+            for b in branch:
+                if checkRepository(r, b):
+                    actionNeeded = True
+        except KeyboardInterrupt:
+            console.print("\n[yellow]⚠ Interrupted by user[/yellow]")
+            raise
     html.timestamp = strftime("%Y-%m-%d %H:%M:%S")
     html.msg += "</ul>\n<p>Report created on %s</p>\n" % html.timestamp
 
@@ -774,6 +899,7 @@ def usage():
     console.print("  [green]-p, --auto-pull[/green]                      Auto-pull when safe (no conflicts, no local changes)")
     console.print("  [green]-j, --parallel[/green]                       Use parallel processing for remote updates (faster)")
     console.print("  [green]--jobs=<n>[/green]                           Number of parallel jobs (default: 4)")
+    console.print("  [green]--use-https[/green]                          Convert git:// and SSH URLs to HTTPS (firewall bypass)")
     console.print("  [green]-u, --untracked[/green]                      Show untracked files")
     console.print("  [green]-b, --bell[/green]                           bell on action needed")
     console.print("  [green]-w <sec>, --watch=<sec>[/green]              after displaying, wait <sec> and run again")
@@ -790,6 +916,7 @@ def usage():
     console.print("\n[bold yellow]== Environment Variables ==[/bold yellow]")
     console.print("  [green]GITCHECK_SMTP_PASSWORD[/green]               SMTP password for email authentication (if smtp_username is set)")
     console.print("  [green]GITCHECK_SSH_KEY[/green]                     Path to SSH private key (alternative to --ssh-key option)")
+    console.print("  [green]GITLAB_TOKEN[/green]                         GitLab/private repo personal access token (for HTTPS with --use-https)")
 
 
 def main():
@@ -801,7 +928,7 @@ def main():
             [
                 "verbose", "debug", "help", "remote", "untracked", "bell", "auto-pull", "parallel", "watch=", "ignore-branch=",
                 "dir=", "maxdepth=", "quiet", "email", "init-email", "all-branch", "localignore=", "interactive",
-                "ssh-key=", "jobs="
+                "ssh-key=", "jobs=", "use-https"
             ]
         )
     except getopt.GetoptError as error:
@@ -834,7 +961,7 @@ def main():
             argopts['parallel'] = True
         elif opt in ["--jobs"]:
             try:
-                argopts['jobs'] = int(arg)
+                argopts['jobs'] = min(int(arg), 10)  # Limit to max 10 jobs
                 if argopts['jobs'] < 1:
                     console.print("[red]Number of jobs must be at least 1[/red]")
                     sys.exit(2)
@@ -886,6 +1013,8 @@ def main():
             else:
                 console.print(f"[red]SSH key file not found: {arg}[/red]")
                 sys.exit(2)
+        elif opt in ["--use-https"]:
+            argopts['use_https'] = True
         elif opt in ["-h", "--help"]:
             usage()
             sys.exit(0)
