@@ -621,9 +621,21 @@ def gitcheck():
                     gitExec(test_repo, "remote update", timeout=15)
                     console.print("[green]✓ Token verified successfully[/green]")
                 except Exception as e:
+                    error_str = str(e)
+                    
+                    # Check if it's an SSL certificate error (common on public WiFi)
+                    if https_utils.isSSLError(error_str):
+                        console.print(f"[red]✗ SSL Certificate Error: {error_str}[/red]")
+                        console.print(https_utils.getSSLErrorHelp())
+                        
+                        if not Confirm.ask("[yellow]Continue anyway?[/yellow]", default=False):
+                            return
+                        # User chose to continue despite SSL error
+                        console.print("[yellow]Continuing with SSL errors - some operations may fail[/yellow]")
+                    
                     # Check if it's an authentication error
-                    if https_utils.isAuthenticationError(str(e)):
-                        console.print(f"[red]✗ Token authentication failed: {str(e)}[/red]")
+                    elif https_utils.isAuthenticationError(error_str):
+                        console.print(f"[red]✗ Token authentication failed: {error_str}[/red]")
                         
                         # Prompt for new token
                         new_token = promptForNewToken()
@@ -634,18 +646,23 @@ def gitcheck():
                                 gitExec(test_repo, "remote update", timeout=15)
                                 console.print("[green]✓ New token verified successfully[/green]")
                             except Exception as retry_error:
-                                if https_utils.isAuthenticationError(str(retry_error)):
+                                retry_str = str(retry_error)
+                                if https_utils.isSSLError(retry_str):
+                                    console.print(f"[red]✗ SSL error persists: {retry_str}[/red]")
+                                    console.print(https_utils.getSSLErrorHelp())
+                                    return
+                                elif https_utils.isAuthenticationError(retry_str):
                                     console.print("[red]✗ New token also failed. Please run: gitcheck_token[/red]")
                                     return
                                 else:
-                                    # Non-auth error, can continue
-                                    console.print(f"[yellow]Warning: {str(retry_error)}[/yellow]")
+                                    # Non-auth/SSL error, can continue
+                                    console.print(f"[yellow]Warning: {retry_str}[/yellow]")
                         else:
                             console.print("[yellow]No token provided. Cannot proceed.[/yellow]")
                             return
                     else:
-                        # Non-authentication error, just warn and continue
-                        console.print(f"[yellow]Warning for {test_repo}: {str(e)}[/yellow]")
+                        # Non-authentication, non-SSL error, just warn and continue
+                        console.print(f"[yellow]Warning for {test_repo}: {error_str}[/yellow]")
                         console.print("[cyan]Continuing with other repositories...[/cyan]")
         
         max_workers = argopts.get('jobs', 4)  # Default to 4 parallel jobs

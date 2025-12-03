@@ -297,8 +297,6 @@ def isAuthenticationError(error_message):
         'token expired',
         'unauthorized',
         'http basic: access denied',
-        'ssl certificate problem',
-        'certificate verify failed',
         'could not read username',
         'could not read password',
         '401',
@@ -306,3 +304,64 @@ def isAuthenticationError(error_message):
     ]
     
     return any(indicator in error_msg for indicator in auth_indicators)
+
+
+def isSSLError(error_message):
+    """
+    Check if error message indicates SSL/certificate problem
+    
+    Args:
+        error_message: Error message string
+        
+    Returns:
+        bool: True if SSL error detected
+    """
+    error_msg = error_message.lower()
+    
+    ssl_indicators = [
+        'ssl certificate problem',
+        'certificate verify failed',
+        'unable to get local issuer certificate',
+        'self signed certificate',
+        'certificate has expired',
+        'ssl handshake failed'
+    ]
+    
+    return any(indicator in error_msg for indicator in ssl_indicators)
+
+
+def getSSLErrorHelp():
+    """
+    Get helpful message for SSL certificate errors
+    
+    Returns:
+        str: Help message for SSL errors
+    """
+    return """
+[yellow]SSL Certificate Error Detected[/yellow]
+
+This usually happens with corporate security tools (Zscaler, Netskope) or public WiFi
+that intercepts HTTPS traffic.
+
+[cyan]Solutions for Zscaler/corporate proxy:[/cyan]
+  1. [green]Export Zscaler root certificate:[/green]
+     - Open Chrome → Settings → Privacy and Security → Manage Certificates
+     - Find "Zscaler Root CA" in Trusted Root Certification Authorities
+     - Export as Base64 .cer file
+     - Save as C:\\certs\\zscaler.pem
+     
+  2. [green]Configure Git to use it:[/green]
+     git config --global http.sslCAInfo "C:/certs/zscaler.pem"
+     
+  3. [green]Or use Windows certificate store (includes Zscaler):[/green]
+     git config --global http.sslBackend schannel
+     
+  4. [green]Temporary bypass (not recommended):[/green]
+     git config --global http.sslVerify false
+     [yellow](Remember to re-enable later!)[/yellow]
+
+[cyan]For public WiFi:[/cyan]
+  - Switch to trusted network (mobile hotspot, home WiFi)
+
+[dim]Most secure: Option 3 (schannel) works immediately with corporate proxies.[/dim]
+"""
